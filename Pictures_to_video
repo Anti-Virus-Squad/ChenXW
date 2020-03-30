@@ -1,0 +1,57 @@
+#include<iostream>
+#include<opencv2/opencv.hpp>
+using namespace std;
+using namespace cv;
+string argv[3];
+int fps = 10; //帧数
+void filePath()
+{
+	cout << "请输入视频输出文件(使用默认路径D:/pictures1/ 输入1)：" << endl;
+	cin >> argv[2];
+	if (argv[2][0] == '1')
+		argv[2] = "D:/pictures1/";
+}
+void creatVideo()
+{
+	vector<String> img;
+	glob(argv[2], img, false);
+	size_t count = img.size();  //图片数目
+	VideoWriter video(argv[2] + "videoW.mp4", VideoWriter::fourcc('m', 'p', '4', 'v'), fps, Size(910, 630));
+	VideoWriter truevideo(argv[2] + "video.mp4", VideoWriter::fourcc('m', 'p', '4', 'v'), fps, Size(910, 630));
+	Mat Image;
+	for (int i = 1; i < 7; i++)
+	{
+		stringstream str;
+		str << "w" << i << ".jpg";
+		Image = imread(argv[2] + str.str());
+		resize(Image, Image, Size(910, 630));
+		video << Image;
+	}
+	for (size_t i = 1; i <= count; i++)
+	{
+		stringstream str;
+		str << i << ".jpg";
+		Image = imread(argv[2] + str.str());
+		if (!Image.empty())
+		{
+			resize(Image, Image, Size(910, 630));
+			video << Image;
+			truevideo << Image;
+		}
+	}
+	for (int i = 7; i < 17; i++)
+	{
+		stringstream str;
+		str << "w" << i << ".jpg";
+		Image = imread(argv[2] + str.str());
+		resize(Image, Image, Size(910, 630));
+		video << Image;
+	}
+}
+int main()
+{
+   filePath();
+   creatVideo();
+   system("pause");
+   return 0;
+}
