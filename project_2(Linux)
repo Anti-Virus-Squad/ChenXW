@@ -1,0 +1,324 @@
+#define _CRT_SECURE_NO_WARNINGS
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/stat.h> 
+#include <signal.h>
+#include <iostream>
+#include <unistd.h>
+#include <fstream>
+#include <vector>
+#include <string.h>
+#include <openssl/md5.h>
+#include <dirent.h>
+#include <errno.h>
+using namespace std;
+
+#pragma comment (lib, "ws2_32.lib")  //加载 ws2_32.dll
+#define BUF_SIZE 1024
+#pragma warning(disable:4996) 
+
+int servSock;
+char buffer[BUF_SIZE] = { 0 };  //缓冲区
+string filenames;
+string temp;
+char file[9][80] = { 0 };//批量发送最大值9
+void singleFile(const char* filename, string afilename);
+void folder();
+void getFiles(std::string path, std::vector<std::string>& files, std::vector<std::string>& names, string& fatherpath);
+char* toHexstream(unsigned char* pData, int len);
+vector<string>files;		//存文件夹内所有子文件的全路径
+vector<string>names;		//存文件夹内所有子文件的文件名
+string fatherpath = "";		//用于截取文件夹名称
+int main() {
+
+	//先检查文件是否存在
+	cout << "请输入要上传到服务器的文件路径：";
+	cin >> file[0];
+	int ch;
+	cout << "请输入'1.继续输入要上传到服务器的文件路径'或'0.路径全部输入完毕'：" << endl;
+	cin >> ch;
+	int total = 1;
+	while (!(ch == 0 || ch == 1)) {
+		cout << "请重新输入：";
+		cin >> ch;
+	}
+	while (ch == 1 && total < 9)
+	{
+		cout << "请输入要上传到服务器的文件路径：" << endl;
+		cin >> temp;
+		strcpy(file[total], temp.c_str());
+		total++;
+		cout << "请输入'1.继续输入要上传到服务器的文件路径'或'0.路径全部输入完毕'：" << endl;
+		cin >> ch;
+		while (!(ch == 0 || ch == 1)) {
+			cout << "请重新输入choice：";
+			cin >> ch;
+		}
+	}
+	/*创建连接的SOCKET*/
+	servSock = socket(AF_INET, SOCK_STREAM, 0);
+	if (servSock < 0)
+	{/*创建失败 */
+		fprintf(stderr, "socker Error:%s\n", strerror(errno));
+		exit(1);
+	}
+
+	/* 初始化客户端地址*/
+	struct sockaddr_in sockAddr;
+	memset(&sockAddr, 0, sizeof(sockAddr));
+	sockAddr.sin_family = AF_INET;
+	//sockAddr.sin_addr.s_addr = inet_addr("192.168.0.106");
+	sockAddr.sin_addr.s_addr = htonl(INADDR_ANY);		//默认绑定本机所有ip
+	sockAddr.sin_port = htons(2345);					//绑定一个端口，此处自己选择绑定了2345
+	if (bind(servSock, (struct sockaddr*)&sockAddr, sizeof(sockAddr)) < 0)
+	{ /*棒定失败 */
+		fprintf(stderr, "Bind Error:%s\n", strerror(errno));
+		system("pause");
+		exit(1);
+	}
+	/*初始化服务器地址*/
+	struct sockaddr_in ser_addr;
+
+	ser_addr.sin_family = AF_INET;
+
+	string server_ip;
+	cout << "请输入服务器的ip地址：";
+	cin >> server_ip;
+	const char* server;
+	server = server_ip.c_str();
+	ser_addr.sin_addr.s_addr = inet_addr(server);
+
+	//sockAddr.sin_addr.s_addr = inet_addr("192.168.0.106");
+
+	int server_port;
+	cout << "请输入服务器的端口号：";
+	cin >> server_port;
+	ser_addr.sin_port = htons(server_port);
+
+	//sockAddr.sin_port = htons(1234);
+
+	if (connect(servSock, (struct sockaddr*)&ser_addr, sizeof(ser_addr)) < 0)	//请求连接
+	{/*连接失败 */
+		fprintf(stderr, "Connect Error:%s\n", strerror(errno));
+		close(servSock);
+		exit(1);
+	}
+	else
+	{
+		char p[2];
+		p[0] = char(total);
+		p[1] = '\0';
+		send(servSock, p, 2, 0);
+		for (int num = 0; num < total; num++)
+		{
+			filenames = file[num];
+			int flag = 1;//0表示文件 1表示文件夹
+		//通过是否含“.”判断是文件夹还是文件名
+			for (int i = 0; i < filenames.length(); i++)
+			{
+				if (filenames[i] == '.')
+					flag = 0;
+			}
+			//如果是单文件
+			if (flag == 0) {
+				// ‘\'的位置
+				int backslashIndex;
+				// 识别最后一个'\'的位置。
+				backslashIndex = filenames.find_last_of('/');
+				// 路径名尾部是文件名
+				singleFile(filenames.c_str(), filenames.substr(backslashIndex + 1, -1));
+			}
+			//文件夹
+			else {
+				folder();
+			}
+			strcpy(buffer, "ThisSendIsEnd.");
+			send(servSock, buffer, sizeof(buffer), 0);
+			recv(servSock, buffer, BUF_SIZE, 0);
+			cout << buffer << "  此次传输完毕." << endl;
+		}
+			shutdown(servSock, SHUT_WR);  //文件读取完毕，断开输出流，向客户端发送FIN包
+			recv(servSock, buffer, BUF_SIZE, 0);  //阻塞，等待客户端接收完毕
+			close(servSock);
+
+			system("pause");
+			return 0;
+		
+	}
+}
+
+void singleFile(const char* filename, string afilename) {
+
+        FILE* fp = fopen(filename, "rb");
+	if (fp == NULL) {
+           int errNum = 0;
+	   printf("Cannot open file, press any key to exit!\n");
+           errNum = errno;
+           printf("open fail errno = %d reason = %s \n", errNum, strerror(errNum));
+	   exit(0);
+	}
+	unsigned int filelength;
+	fseek(fp, 0, SEEK_END);
+	filelength = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+	char buf[4];
+	memcpy(buf, &filelength, 4);
+	//先发送文件名
+	strcpy(buffer, afilename.c_str());
+	send(servSock, buffer, sizeof(buffer), 0);
+	cout << "发送文件名：" << afilename.c_str() << endl;
+
+	recv(servSock, buffer, BUF_SIZE, 0);
+
+	send(servSock, buf, sizeof(buf), 0);
+	//获取位置
+	recv(servSock, buf, 4, 0);
+	unsigned int pos;
+	memcpy(&pos, buf, 4);
+	unsigned int se = 0;
+	//循环发送数据，直到文件结尾
+	int nCount;
+
+	
+	fseek(fp, pos, SEEK_SET);
+	for (unsigned int i = pos; i < filelength; i += se)
+	{
+		nCount = fread(buffer, 1, BUF_SIZE, fp);
+		se = send(servSock, buffer, nCount, 0);
+		if (se == -1 || se == 0)
+		{
+			close(servSock);
+			cout << "发送失败" << endl;
+			return;
+		}
+		recv(servSock, buffer, BUF_SIZE, 0);	//确认cilent接收到上一条数据
+
+	}
+	fclose(fp);
+
+	fp = fopen(filename, "rb");
+	//计算MD5
+	MD5_CTX md5;
+	unsigned char buff[1024];
+	unsigned char decrypt[16];
+	unsigned int len;
+	MD5_Init(&md5);
+	while (len = fread(buff, 1, 1024, fp))
+	{
+		MD5_Update(&md5, buff, len);
+	}
+	MD5_Final(decrypt,&md5);
+	char result[50] = { 0 };
+	strcpy(result, toHexstream(decrypt, 16));
+
+	fclose(fp);
+
+	strcpy(buffer, "ThisFileIsEnd.");
+	send(servSock, buffer, sizeof(buffer), 0);
+	recv(servSock, buffer, BUF_SIZE, 0);
+	cout << buffer << "  文件接收完毕." << endl;
+
+	//发送MD5
+	strcpy(buffer, result);
+	send(servSock, buffer, sizeof(buffer), 0);
+	recv(servSock, buffer, BUF_SIZE, 0);
+	//存在误码,重新传输
+	if (strcmp(buffer, "ErrorCode.") == 0)
+	{
+		cout << "传输出错，正在重传" << endl;
+		fp = fopen(filename, "rb");  //以二进制方式打开文件
+		recv(servSock, buffer, 4, 0);
+		memcpy(&pos, buffer, 4);
+		//循环发送数据，直到文件结尾
+		
+		for (unsigned int i = 0; i < filelength; i += se)
+		{
+			nCount = fread(buffer, 1, BUF_SIZE, fp);
+			se = send(servSock, buffer, nCount, 0);
+			if (se == -1 || se == 0)
+			{
+				close(servSock);
+				cout << "发送失败" << endl;
+				return;
+			}
+			recv(servSock, buffer, BUF_SIZE, 0);	//确认cilent接收到上一条数据
+
+		}
+		
+		fclose(fp);
+		strcpy(buffer, "ThisFileIsEnd.");
+		send(servSock, buffer, sizeof(buffer), 0);
+		recv(servSock, buffer, BUF_SIZE, 0);
+		cout << buffer << "  文件接收完毕." << endl;
+	}
+	
+}
+
+void folder() {
+	files.clear();
+	names.clear();
+	getFiles(filenames, files, names, fatherpath);//获取文件夹下所有子文件对应的名称与路径，并发送文件夹名给cilent
+	for (int i = 0; i < files.size(); i++)		//将所有文件逐个发送
+	{
+		singleFile(files[i].c_str(), names[i].c_str());
+	}
+}
+
+void getFiles(std::string path, std::vector<std::string>& files, std::vector<std::string>& names, string& fatherpath)
+{
+	/*	path----输入的全路径 D:\sql（内包括一个kkk子文件夹）
+		files----存着所有子文件的全路径
+		names----存着要发送给客户端的文件名（带路径）
+		比如：sql\111.txt	sql\kkk\111.txt
+		fatherpath----存着文件夹的名称（子文件夹带路径）
+		比如：sql	sql\kkk
+	*/
+	
+	string filefoldername;
+	// ‘\'的位置
+	int backslashIndex;
+	// 识别最后一个'\'的位置。
+	backslashIndex = path.find_last_of('/');
+	// 路径名尾部是文件名
+	filefoldername = path.substr(backslashIndex + 1, -1);
+	fatherpath += filefoldername;
+	cout << "发送文件夹名：" << fatherpath << endl;
+	strcpy(buffer, fatherpath.c_str());
+	send(servSock, buffer, sizeof(buffer), 0);
+	recv(servSock, buffer, BUF_SIZE, 0);	//接收到cilent的回应
+
+	//name存放子文件的名字，whole存放子文件的全路径
+    const char *filepath = path.c_str();
+    DIR* dir = opendir(filepath);
+    dirent* p = NULL;//定义遍历指针
+    while((p = readdir(dir)) != NULL)//开始逐个遍历
+    {
+         int i=0;
+         if(p->d_name[0] != '.')//d_name是一个char数组，存放当前遍历到的文件名
+          {
+               string wholepath= fatherpath + "/"+ string(p->d_name);
+               files.push_back(wholepath);
+               names.push_back(string(p->d_name));
+          }
+    }
+    closedir(dir);//关闭指定目录
+}
+char* toHexstream(unsigned char* pData, int len)
+{
+    int i;
+    static char buff[1024 + 2] = { 0 };
+    int ret = 0;
+    int pos = 0;
+    for (i = 0; i < len && i < 512; i++)
+    {
+        ret = sprintf(buff + pos, "%02X", pData[i]);//以十六进制输出小于两位的用0补齐
+        pos += ret;
+    }
+    return buff;
+}
+
+
